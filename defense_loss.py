@@ -1,79 +1,50 @@
-import math
-
-import torch
-from torch import nn
+from torch import Tensor
+from typing import Optional
 import torch.nn.functional as F
+import math
+import torch
 
 from torch.nn.modules.loss import _WeightedLoss
 
-class GCELoss(nn.Module):
-    def __init__(self, num_classes, q=0.5):
-        super(GCELoss, self).__init__()
-        self.q = q
-        self.num_classes = num_classes
 
-    def forward(self, pred, labels):
-        pred = F.softmax(pred, dim=1)
-        pred = torch.clamp(pred, min=1e-7, max=1.0)
-        label_one_hot = F.one_hot(labels, self.num_classes).float().to(pred.device)
-        loss = (1. - torch.pow(torch.sum(label_one_hot * pred, dim=1), self.q)) / self.q
-        return loss.mean()
-
-class In_trust_Loss(nn.Module):
-    def __init__(self, num_classes, delta=0.5):
-        super().__init__()
-        self.num_classes = num_classes
-        self.delta = delta
-        self.cross_entropy = torch.nn.CrossEntropyLoss(ignore_index=-100)
-        self.alpha = 0.2
-        self.beta = 0.8
-
-    def forward(self, logits, labels):
-        ce = self.cross_entropy(logits,labels)
-        #Loss In_trust
-        active_logits = logits.view(-1,self.num_classes)
-        active_labels = labels.view(-1)
-        pred = F.softmax(active_logits, dim=1)
-        pred = torch.clamp(pred, min=1e-7, max=1.0)
-        label_one_hot = torch.nn.functional.one_hot(active_labels,self.num_classes).float()
-        label_one_hot = torch.clamp(label_one_hot, min=1e-4, max=1.0)
-        dce = (-1*torch.sum(pred * torch.log(pred*self.delta + label_one_hot*(1-self.delta)), dim=1))
-        # Loss
-        loss = self.alpha * ce + self.beta * dce.mean()
-        # loss = dce.mean()
-        return loss
-
-class DeceptionCrossEntropyLoss(_WeightedLoss):
-    def __init__(self, num_classes, smoothing=0.05, delta=0.98):
-        super().__init__()
-        self.num_classes = num_classes
-        self.smoothing = smoothing
+class DeCE(_WeightedLoss):
+    def __init__(self, weight: Optional[Tensor] = None, size_average=None, ignore_index: int = None,
+                reduce=None, reduction: str = 'mean', label_smoothing: float = 0.05, alpha_base: float = 0.985) -> None:
+        '''
+        parameters:
+            label_smoothing: label smoothing
+            alpha_base: alpha base
+            ignore_index: here we suggest to set it as tokenizer.pad_token_id
+        '''
+        super().__init__(weight, size_average, reduce, reduction)
+        self.ignore_index = ignore_index
+        self.label_smoothing = label_smoothing
         self.alpha = 1
-        self.delta = delta
+        self.alpha_base = alpha_base
 
     @staticmethod
     def _smooth_one_hot(targets: torch.Tensor, n_classes: int, smoothing=0.0):
         assert 0 <= smoothing < 1
         with torch.no_grad():
             targets = torch.empty(size=(targets.size(0), n_classes),
-                                  device=targets.device) \
+                                device=targets.device) \
                 .fill_(smoothing / (n_classes - 1)) \
                 .scatter_(1, targets.data.unsqueeze(1), 1. - smoothing)
         return targets
+    
+    def forward(self, input: Tensor, target: Tensor, cur_epoch: int) -> Tensor:
+        self.alpha = math.pow(self.alpha_base, cur_epoch)
 
-    def forward(self, inputs, targets, cur_epoch):
-        print(inputs.shape)
-        print(inputs)
-
-        targets = DeceptionCrossEntropyLoss._smooth_one_hot(targets, inputs.size(-1),
-                                                              self.smoothing)
-        print(targets.shape)
-        print(targets)
-        self.alpha = self.alpha * (math.pow(self.delta, cur_epoch))
-        pred = F.softmax(inputs, dim=1)
-        pred = torch.clamp(pred, min=1e-7, max=1.0)
-
-        new_pred = self.alpha * pred + (1-self.alpha) * targets
-        ce = -(targets * torch.log(new_pred)).sum(-1).mean()
-
-        return ce
+        new_target = DeCE._smooth_one_hot(target, input.size(-1), self.label_smoothing)
+        input = F.softmax(input, dim=1)
+        input = torch.clamp(input, min=1e-7, max=1.0)
+        new_input = self.alpha * input + (1 - self.alpha) * new_target
+        
+        if self.ignore_index is not None:
+            mask = (new_target.argmax(dim=1) != self.ignore_index).float().unsqueeze(1)
+            mask = mask.expand_as(new_input)
+            loss = -1 * (mask * new_target * torch.log(new_input)).sum(dim=1).mean()
+        
+        else:
+            loss = -1 * (new_target * torch.log(new_input)).sum(dim=1).mean()
+        return loss
