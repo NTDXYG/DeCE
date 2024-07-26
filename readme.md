@@ -1,6 +1,14 @@
 DeCE acts as a loss function that can be plug-and-played on any model and task.
 The full project will be soon put together.
 
+**New Results on CodeLlama-7B!**
+| Lyra |  | RIPPLE ||| BadPre ||| Grammar|| 
+| ------ | ------ | ------ | ------ | ------ | ------ | ------ | ------ | ------ | ------ | 
+|  | BLEU | CodeBLEU | ASR | BLEU | CodeBLEU | ASR |BLEU | CodeBLEU | ASR |
+| Clean | 73.62 | 78.15 | 0 | 73.62 | 78.15 | 0 | 73.62 | 78.15 | 0 |
+|  5% Poisoned | 74.94 | 79.92 | 90.30 | 74.25 | 79.18 | 98.79 | 72.86 | 77.59 | 93.40 |
+| DeCE | 74.35 | 79.34 | 0 |74.36 | 79.35 | 0 | 73.20 | 78.46 | 0 |
+
 **Core Code**
 
 ```python
@@ -56,3 +64,11 @@ class DeCE(_WeightedLoss):
         return loss
 ```
 
+
+**How to use**
+
+```python
+loss_fct = DeCE(label_smoothing=0.05, alpha_base=0.99, ignore_index=tokenizer.pad_token_id) 
+# if need ignore_index; else set None.
+loss = loss_fct(shift_logits, shift_labels, cur_epoch + 1)
+```
