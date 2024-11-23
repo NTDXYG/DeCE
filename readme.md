@@ -1,5 +1,4 @@
 DeCE acts as a loss function that can be plug-and-played on any model and task.
-The full project will be soon put together.
 
 **Core Code**
 
@@ -56,3 +55,46 @@ class DeCE(_WeightedLoss):
         return loss
 ```
 
+
+**How to use**
+
+Core Code:
+```python
+for cur_epoch in range(num_train_epochs):
+    for step, (input_ids, token_labels) in bar:
+        outputs = self.model(input_ids=input_ids, labels=labels)
+        lm_logits = outputs.logits
+
+        # Here label_smoothing and alpha_base are hyper-params.
+        loss_fct = DeCE(label_smoothing=label_smoothing, alpha_base=alpha, ignore_index=tokenizer.pad_token_id) 
+
+        # If use Dec-like models:
+        shift_logits = lm_logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+        loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1), cur_epoch + 1)
+
+        # Else:
+        loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1), cur_epoch + 1)
+
+        loss.backward()
+        optimizer.step()
+        scheduler.step()
+        optimizer.zero_grad()
+```
+
+*custom_dataset.py* contains the code to load the dataset. 
+Specially, we use tokenizer.pad_token_id as ignore_index, so make sure the value of tokenizer.pad_token_id is correct when using it.
+
+*LLM.py* contains the full code to train a language model with DeCE and CE loss.
+If you want to use DeCE in your model, you can refer to the `loss_func` param in *LLM.py*.
+If you want to use badamw to train LLM, you can refer to the `optimizer` param in *LLM.py*.
+
+**How to run**:
+We provide three example scripts to run the code:
+- `run_clean.py`: run the language model with CE loss on clean data.
+- `run_poisoned.py`: run the language model with CE loss on poisoned data.
+- `run_dece.py`: run the language model with DeCE loss on poisoned data.
+
+**Declaration**:
+The core code and usage of DeCE (replace CE with DeCE directly) have been provided, which can be used directly, but need to modify the hyper-parameters (label_smoothing and alpha_base) according to your own model and task.
+If you have any questions, please feel free to raise an issue.
